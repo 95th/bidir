@@ -12,11 +12,11 @@ use std::fmt;
 ///Figure 6
 #[derive(Clone, Debug)]
 enum Expr {
-    Variable(String),
+    Variable(ExVar),
     Literal(Literal),
-    Abstraction(String, Box<Expr>),
+    Abstraction(ExVar, Box<Expr>),
     Application(Box<Expr>, Box<Expr>),
-    Let(String, Box<Expr>, Box<Expr>),
+    Let(ExVar, Box<Expr>, Box<Expr>),
     Annotation(Box<Expr>, Type),
     Tuple(Box<Expr>, Box<Expr>),
 }
@@ -58,13 +58,44 @@ impl fmt::Display for Literal {
     }
 }
 
+macro_rules! define_index_type {
+    ($name:ident) => {
+        #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+        pub struct $name(u32);
+
+        impl $name {
+            pub fn next(&mut self) -> Self {
+                let c = *self;
+                self.0 += 1;
+                c
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl From<u32> for $name {
+            fn from(v: u32) -> Self {
+                Self(v)
+            }
+        }
+    };
+}
+
+define_index_type!(Var);
+define_index_type!(UniVar);
+define_index_type!(ExVar);
+
 ///Figure 6
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Type {
     Literal(LiteralType),
-    Variable(String),
-    Existential(String),
-    Quantification(String, Box<Type>),
+    Variable(ExVar),
+    Existential(ExVar),
+    Quantification(ExVar, Box<Type>),
     Function(Box<Type>, Box<Type>),
     Product(Box<Type>, Box<Type>),
 }
@@ -73,8 +104,8 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
             Type::Literal(lit) => write!(f, "{}", lit),
-            Type::Variable(var) => write!(f, "{}", var),
-            Type::Existential(ex) => write!(f, "{}^", ex),
+            Type::Variable(var) => write!(f, "{:?}", var),
+            Type::Existential(ex) => write!(f, "{:?}^", ex),
             Type::Quantification(a, ty) => write!(f, "(∀{}. {})", a, ty),
             Type::Function(a, c) => write!(f, "({} -> {})", a, c),
             Type::Product(a, b) => write!(f, "{} × {}", a, b),
@@ -117,11 +148,11 @@ impl Type {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ContextElement {
-    Variable(String),
-    Existential(String),
-    Solved(String, Type),
-    Marker(String),
-    TypedVariable(String, Type),
+    Variable(ExVar),
+    Existential(ExVar),
+    Solved(ExVar, Type),
+    Marker(ExVar),
+    TypedVariable(ExVar, Type),
 }
 
 impl fmt::Display for ContextElement {
@@ -203,10 +234,10 @@ impl Context {
         panic!();
     }
 
-    fn get_solved(&self, alpha: &str) -> Option<&Type> {
+    fn get_solved(&self, alpha: ExVar) -> Option<&Type> {
         for ele in &self.elements {
             if let ContextElement::Solved(alpha1, tau) = ele {
-                if alpha == alpha1 {
+                if alpha == *alpha1 {
                     return Some(tau);
                 }
             }
@@ -214,22 +245,22 @@ impl Context {
         None
     }
 
-    fn has_existential(&self, alpha: &str) -> bool {
+    fn has_existential(&self, alpha: ExVar) -> bool {
         self.elements
             .iter()
-            .any(|ele| ele == &ContextElement::Existential(alpha.to_string()))
+            .any(|ele| ele == &ContextElement::Existential(alpha))
     }
 
-    fn has_variable(&self, alpha: &str) -> bool {
+    fn has_variable(&self, alpha: ExVar) -> bool {
         self.elements
             .iter()
-            .any(|ele| ele == &ContextElement::Variable(alpha.to_string()))
+            .any(|ele| ele == &ContextElement::Variable(alpha))
     }
 
-    fn get_annotation(&self, x: &str) -> Option<&Type> {
+    fn get_annotation(&self, x: ExVar) -> Option<&Type> {
         for ele in &self.elements {
             if let ContextElement::TypedVariable(var, type_) = ele {
-                if var == x {
+                if *var == x {
                     return Some(type_);
                 }
             }
@@ -243,18 +274,18 @@ impl Context {
 /// It is passed around mutably everywhere
 #[derive(Clone, Debug)]
 struct State {
-    existentials: usize,
+    existentials: ExVar,
 }
 
 impl State {
     fn initial() -> State {
-        State { existentials: 0 }
+        State {
+            existentials: ExVar::default(),
+        }
     }
 
-    fn fresh_existential(&mut self) -> String {
-        let result = format!("t{}", self.existentials);
-        self.existentials += 1;
-        result
+    fn fresh_existential(&mut self) -> ExVar {
+        self.existentials.next()
     }
 }
 
@@ -284,7 +315,7 @@ fn checks_against(state: &mut State, context: &Context, expr: &Expr, type_: &Typ
         //->I
         (Expr::Abstraction(x, e), Type::Function(a, b)) => {
             print_rule("->I");
-            let typed_var = ContextElement::TypedVariable(x.clone(), *a.clone());
+            let typed_var = ContextElement::TypedVariable(*x, *a.clone());
             let gamma = context.add(typed_var.clone());
             checks_against(state, &gamma, e, b).drop(typed_var)
         }
@@ -338,7 +369,7 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
         //Var
         Expr::Variable(x) => {
             print_rule("Var");
-            if let Some(annotation) = context.get_annotation(x) {
+            if let Some(annotation) = context.get_annotation(*x) {
                 return (annotation.clone(), context.clone());
             };
             panic!();
@@ -384,12 +415,12 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
         Expr::Let(var, expr, body) => {
             print_rule("Let");
             let (t0, gamma) = synthesizes_to(state, context, expr);
-            let theta = gamma.add(ContextElement::TypedVariable(var.clone(), t0.clone()));
+            let theta = gamma.add(ContextElement::TypedVariable(*var, t0.clone()));
 
             let (t1, delta) = synthesizes_to(state, &theta, body);
             return (
                 t1,
-                delta.insert_in_place(ContextElement::TypedVariable(var.clone(), t0), vec![]),
+                delta.insert_in_place(ContextElement::TypedVariable(*var, t0), vec![]),
             );
         }
 
@@ -422,28 +453,28 @@ fn application_synthesizes_to(
             let alpha1 = state.fresh_existential();
             let alpha2 = state.fresh_existential();
             let gamma = context.insert_in_place(
-                ContextElement::Existential(alpha.to_string()),
+                ContextElement::Existential(*alpha),
                 vec![
-                    ContextElement::Existential(alpha2.clone()),
-                    ContextElement::Existential(alpha1.clone()),
+                    ContextElement::Existential(alpha2),
+                    ContextElement::Existential(alpha1),
                     ContextElement::Solved(
-                        alpha.clone(),
+                        *alpha,
                         Type::Function(
-                            Box::new(Type::Existential(alpha1.clone())),
-                            Box::new(Type::Existential(alpha2.clone())),
+                            Box::new(Type::Existential(alpha1)),
+                            Box::new(Type::Existential(alpha2)),
                         ),
                     ),
                 ],
             );
-            let delta = checks_against(state, &gamma, expr, &Type::Existential(alpha1.clone()));
-            return (Type::Existential(alpha2.clone()), delta);
+            let delta = checks_against(state, &gamma, expr, &Type::Existential(alpha1));
+            return (Type::Existential(alpha2), delta);
         }
         //ForallApp
         Type::Quantification(alpha, a) => {
             print_rule("∀App");
             let alpha1 = state.fresh_existential();
             let gamma = context.add(ContextElement::Existential(alpha1.clone()));
-            let substituted_a = substitution(a, alpha, &Type::Existential(alpha1));
+            let substituted_a = substitution(a, *alpha, &Type::Existential(alpha1));
             return application_synthesizes_to(state, &gamma, &substituted_a, expr);
         }
         //App
@@ -460,12 +491,14 @@ fn application_synthesizes_to(
 fn is_well_formed(context: &Context, type_: &Type) -> bool {
     match type_ {
         Type::Literal(_) => true,
-        Type::Variable(var) => context.has_variable(var),
+        Type::Variable(var) => context.has_variable(*var),
         Type::Function(a, b) => is_well_formed(context, a) && is_well_formed(context, b),
         Type::Quantification(alpha, a) => {
             is_well_formed(&context.add(ContextElement::Variable(alpha.clone())), a)
         }
-        Type::Existential(var) => context.has_existential(var) || context.get_solved(var).is_some(),
+        Type::Existential(var) => {
+            context.has_existential(*var) || context.get_solved(*var).is_some()
+        }
         Type::Product(a, b) => is_well_formed(context, a) && is_well_formed(context, b),
     }
 }
@@ -475,19 +508,19 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
 ///
 /// Alas, I could not find a definition of the FV function and had to copy the implementation of
 /// https://github.com/ollef/Bidirectional and https://github.com/atennapel/bidirectional.js
-fn occurs_in(alpha: &str, a: &Type) -> bool {
+fn occurs_in(alpha: ExVar, a: &Type) -> bool {
     match a {
         Type::Literal(_) => false,
-        Type::Variable(var) => alpha == var,
+        Type::Variable(var) => alpha == *var,
         Type::Function(t1, t2) => occurs_in(alpha, t1) || occurs_in(alpha, t2),
         Type::Quantification(beta, t) => {
-            if alpha == beta {
+            if alpha == *beta {
                 return true;
             } else {
                 return occurs_in(alpha, t);
             }
         }
-        Type::Existential(var) => alpha == var,
+        Type::Existential(var) => alpha == *var,
         Type::Product(a, b) => occurs_in(alpha, a) || occurs_in(alpha, b),
     }
 }
@@ -543,9 +576,9 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
             print_rule("<:∀L");
             let r1 = state.fresh_existential();
             let gamma = context
-                .add(ContextElement::Marker(r1.clone()))
-                .add(ContextElement::Existential(r1.clone()));
-            let substituted_a = substitution(a, alpha, &Type::Existential(r1.clone()));
+                .add(ContextElement::Marker(r1))
+                .add(ContextElement::Existential(r1));
+            let substituted_a = substitution(a, *alpha, &Type::Existential(r1.clone()));
             let delta = subtype(state, &gamma, &substituted_a, b);
             return delta.drop(ContextElement::Marker(r1.clone()));
         }
@@ -559,8 +592,8 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
         //<:InstatiateL
         (Type::Existential(alpha), _) => {
             print_rule("<:InstantiateL");
-            if !occurs_in(alpha, b) {
-                instantiate_l(state, context, alpha, b)
+            if !occurs_in(*alpha, b) {
+                instantiate_l(state, context, *alpha, b)
             } else {
                 panic!("Circular!");
             }
@@ -568,8 +601,8 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
         //<:InstantiateR
         (_, Type::Existential(alpha)) => {
             print_rule("<:InstantiateR");
-            if !occurs_in(alpha, a) {
-                instantiate_r(state, context, a, alpha)
+            if !occurs_in(*alpha, a) {
+                instantiate_r(state, context, a, *alpha)
             } else {
                 panic!("Circular!");
             }
@@ -581,16 +614,20 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
 }
 
 /// Figure 10
-fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) -> Context {
-    print_helper("instantiate_l", alpha.into(), format!("{}", b), context);
-    let (left_context, right_context) =
-        context.split_at(ContextElement::Existential(alpha.to_string()));
+fn instantiate_l(state: &mut State, context: &Context, alpha: ExVar, b: &Type) -> Context {
+    print_helper(
+        "instantiate_l",
+        alpha.to_string(),
+        format!("{}", b),
+        context,
+    );
+    let (left_context, right_context) = context.split_at(ContextElement::Existential(alpha));
 
     //InstLSolve
     if b.is_monotype() && is_well_formed(&left_context, b) {
         print_rule("InstLSolve");
         return context.insert_in_place(
-            ContextElement::Existential(alpha.to_string()),
+            ContextElement::Existential(alpha),
             vec![ContextElement::Solved(alpha.into(), b.clone())],
         );
     }
@@ -601,7 +638,7 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
             let alpha1 = state.fresh_existential();
             let alpha2 = state.fresh_existential();
             let gamma = context.insert_in_place(
-                ContextElement::Existential(alpha.to_string()),
+                ContextElement::Existential(alpha),
                 vec![
                     ContextElement::Existential(alpha2.clone()),
                     ContextElement::Existential(alpha1.clone()),
@@ -614,8 +651,8 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
                     ),
                 ],
             );
-            let theta = instantiate_r(state, &gamma, a1, &alpha1);
-            let delta = instantiate_l(state, &theta, &alpha2, &apply_context(*a2.clone(), &theta));
+            let theta = instantiate_r(state, &gamma, a1, alpha1);
+            let delta = instantiate_l(state, &theta, alpha2, &apply_context(*a2.clone(), &theta));
             return delta;
         }
         //InstAIIR
@@ -645,10 +682,14 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
 }
 
 /// Figure 10
-fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) -> Context {
-    print_helper("instantiate_r", format!("{}", a), alpha.into(), context);
-    let (left_context, right_context) =
-        context.split_at(ContextElement::Existential(alpha.to_string()));
+fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: ExVar) -> Context {
+    print_helper(
+        "instantiate_r",
+        format!("{}", a),
+        alpha.to_string(),
+        context,
+    );
+    let (left_context, right_context) = context.split_at(ContextElement::Existential(alpha));
 
     //InstRSolve
     if a.is_monotype() && is_well_formed(&left_context, a) {
@@ -677,8 +718,8 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
                     ),
                 ],
             );
-            let theta = instantiate_l(state, &gamma, &alpha1, a1);
-            let delta = instantiate_r(state, &theta, &apply_context(*a2.clone(), &theta), &alpha2);
+            let theta = instantiate_l(state, &gamma, alpha1, a1);
+            let delta = instantiate_r(state, &theta, &apply_context(*a2.clone(), &theta), alpha2);
             return delta;
         }
         //InstRAllL
@@ -691,7 +732,7 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
             let delta = instantiate_r(
                 state,
                 &gamma,
-                &substitution(b, beta, &Type::Existential(beta1.clone())),
+                &substitution(b, *beta, &Type::Existential(beta1.clone())),
                 alpha,
             );
 
@@ -715,8 +756,8 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
                     ),
                 ],
             );
-            let theta = instantiate_l(state, &gamma, &alpha1, a);
-            let delta = instantiate_r(state, &theta, &apply_context(*b.clone(), &theta), &beta1);
+            let theta = instantiate_l(state, &gamma, alpha1, a);
+            let delta = instantiate_r(state, &theta, &apply_context(*b.clone(), &theta), beta1);
             return delta;
         }
         //InstRReach
@@ -740,7 +781,7 @@ fn apply_context(a: Type, context: &Context) -> Type {
         Type::Literal(_) => a,
         Type::Variable(_) => a,
         Type::Existential(ref alpha) => {
-            if let Some(tau) = context.get_solved(alpha) {
+            if let Some(tau) = context.get_solved(*alpha) {
                 apply_context(tau.clone(), context)
             } else {
                 a
@@ -765,25 +806,25 @@ fn apply_context(a: Type, context: &Context) -> Type {
 /// https://github.com/ollef/Bidirectional and https://github.com/atennapel/bidirectional.js
 ///
 /// Substitution is written in the paper as [α^/α]A which means, α is replaced with α^ in all occurrences in A
-fn substitution(a: &Type, alpha: &str, b: &Type) -> Type {
+fn substitution(a: &Type, alpha: ExVar, b: &Type) -> Type {
     match a {
         Type::Literal(_) => a.clone(),
         Type::Variable(var) => {
-            if var == alpha {
+            if *var == alpha {
                 b.clone()
             } else {
                 a.clone()
             }
         }
         Type::Quantification(var, type_) => {
-            if var == alpha {
+            if *var == alpha {
                 Type::Quantification(var.clone(), Box::new(b.clone()))
             } else {
                 Type::Quantification(var.clone(), Box::new(substitution(type_, alpha, b)))
             }
         }
         Type::Existential(var) => {
-            if var == alpha {
+            if *var == alpha {
                 b.clone()
             } else {
                 a.clone()
@@ -842,7 +883,7 @@ fn basic() {
 fn application_string() {
     assert_eq!(
         synth(Expr::Application(
-            Expr::Abstraction("x".into(), Expr::Variable("x".into()).into(),).into(),
+            Expr::Abstraction(1.into(), Expr::Variable(1.into()).into(),).into(),
             literal_string().into(),
         )),
         Type::Literal(LiteralType::String)
@@ -853,7 +894,7 @@ fn application_string() {
 fn application_bool() {
     assert_eq!(
         synth(Expr::Application(
-            Expr::Abstraction("x".into(), Expr::Variable("x".into()).into(),).into(),
+            Expr::Abstraction(1.into(), Expr::Variable(1.into()).into(),).into(),
             literal_bool().into(),
         )),
         Type::Literal(LiteralType::Bool)
@@ -863,13 +904,10 @@ fn application_bool() {
 #[test]
 fn lambda() {
     assert_eq!(
-        synth(Expr::Abstraction(
-            "x".into(),
-            Expr::Variable("x".into()).into()
-        )),
+        synth(Expr::Abstraction(1.into(), Expr::Variable(1.into()).into())),
         Type::Function(
-            Type::Existential("t0".into()).into(),
-            Type::Existential("t0".into()).into()
+            Type::Existential(0.into()).into(),
+            Type::Existential(0.into()).into()
         )
     );
 }
@@ -898,10 +936,10 @@ fn tuples_in_lambda() {
     assert_eq!(
         synth(construct_app(
             Expr::Abstraction(
-                "x".into(),
+                1.into(),
                 Expr::Tuple(
-                    Expr::Variable("x".into()).into(),
-                    Expr::Variable("x".into()).into()
+                    Expr::Variable(1.into()).into(),
+                    Expr::Variable(1.into()).into()
                 )
                 .into()
             ),
@@ -919,12 +957,12 @@ fn nested_tuples() {
     assert_eq!(
         synth(construct_app(
             Expr::Abstraction(
-                "x".into(),
+                1.into(),
                 Expr::Tuple(
-                    Expr::Variable("x".into()).into(),
+                    Expr::Variable(1.into()).into(),
                     Expr::Tuple(
-                        Expr::Variable("x".into()).into(),
-                        Expr::Variable("x".into()).into()
+                        Expr::Variable(1.into()).into(),
+                        Expr::Variable(1.into()).into()
                     )
                     .into()
                 )
@@ -961,14 +999,14 @@ fn tuples_in_fn() {
 fn generalised_let() {
     assert_eq!(
         synth(construct_let(
-            "newid",
+            0.into(),
             id_fn().into(),
             //Without annotation, e.g.
             //Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),).into(),
             //It fails.
             Expr::Tuple(
-                construct_app(Expr::Variable("newid".into()), literal_string().into()).into(),
-                construct_app(Expr::Variable("newid".into()), literal_bool().into()).into()
+                construct_app(Expr::Variable(0.into()), literal_string().into()).into(),
+                construct_app(Expr::Variable(0.into()), literal_bool().into()).into()
             )
         )),
         Type::Product(
@@ -982,9 +1020,9 @@ fn generalised_let() {
 fn let_binding() {
     assert_eq!(
         synth(Expr::Let(
-            "a".into(),
+            0.into(),
             literal_bool().into(),
-            Expr::Application(id_fn().into(), Expr::Variable("a".into()).into()).into()
+            Expr::Application(id_fn().into(), Expr::Variable(0.into()).into()).into()
         )),
         Type::Literal(LiteralType::Bool)
     )
@@ -995,9 +1033,9 @@ fn let_fn() {
     assert_eq!(
         synth(construct_app(
             construct_let(
-                "newid",
-                Expr::Abstraction("x".into(), Expr::Variable("x".into()).into(),).into(),
-                Expr::Variable("newid".into())
+                1.into(),
+                Expr::Abstraction(2.into(), Expr::Variable(2.into()).into(),).into(),
+                Expr::Variable(1.into())
             ),
             literal_string().into()
         )),
@@ -1009,18 +1047,18 @@ fn construct_app(e0: Expr, e1: Expr) -> Expr {
     Expr::Application(e0.into(), e1.into())
 }
 
-fn construct_let(var: &str, e0: Expr, body: Expr) -> Expr {
-    Expr::Let(var.into(), e0.into(), body.into())
+fn construct_let(var: ExVar, e0: Expr, body: Expr) -> Expr {
+    Expr::Let(var, e0.into(), body.into())
 }
 
 fn id_fn() -> Expr {
     Expr::Annotation(
-        Expr::Abstraction("x".into(), Expr::Variable("x".into()).into()).into(),
+        Expr::Abstraction(1.into(), Expr::Variable(1.into()).into()).into(),
         Type::Quantification(
-            "t".into(),
+            2.into(),
             Type::Function(
-                Type::Variable("t".into()).into(),
-                Type::Variable("t".into()).into(),
+                Type::Variable(2.into()).into(),
+                Type::Variable(2.into()).into(),
             )
             .into(),
         ),
