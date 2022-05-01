@@ -11,26 +11,26 @@ use std::fmt;
 
 ///Figure 6
 #[derive(Clone, Debug)]
-enum Expression {
+enum Expr {
     Variable(String),
     Literal(Literal),
-    Abstraction(String, Box<Expression>),
-    Application(Box<Expression>, Box<Expression>),
-    Let(String, Box<Expression>, Box<Expression>),
-    Annotation(Box<Expression>, Type),
-    Tuple(Box<Expression>, Box<Expression>),
+    Abstraction(String, Box<Expr>),
+    Application(Box<Expr>, Box<Expr>),
+    Let(String, Box<Expr>, Box<Expr>),
+    Annotation(Box<Expr>, Type),
+    Tuple(Box<Expr>, Box<Expr>),
 }
 
-impl fmt::Display for Expression {
+impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Expression::Literal(lit) => write!(f, "{}", lit),
-            Expression::Variable(var) => write!(f, "{}", var),
-            Expression::Abstraction(alpha, e) => write!(f, "(\\{} -> {})", alpha, e),
-            Expression::Application(e1, e2) => write!(f, "{} {}", e1, e2),
-            Expression::Let(var, expr, body) => write!(f, "let {} = {} in {}", var, expr, body),
-            Expression::Annotation(e, a) => write!(f, "({}: {})", e, a),
-            Expression::Tuple(fst, snd) => write!(f, "({}, {})", fst, snd),
+            Expr::Literal(lit) => write!(f, "{}", lit),
+            Expr::Variable(var) => write!(f, "{}", var),
+            Expr::Abstraction(alpha, e) => write!(f, "(\\{} -> {})", alpha, e),
+            Expr::Application(e1, e2) => write!(f, "{} {}", e1, e2),
+            Expr::Let(var, expr, body) => write!(f, "let {} = {} in {}", var, expr, body),
+            Expr::Annotation(e, a) => write!(f, "({}: {})", e, a),
+            Expr::Tuple(fst, snd) => write!(f, "({}, {})", fst, snd),
         }
     }
 }
@@ -271,23 +271,18 @@ fn literal_checks_against(literal: &Literal, type_: &LiteralType) -> bool {
 }
 
 /// Figure 11.
-fn checks_against(
-    state: &mut State,
-    context: &Context,
-    expr: &Expression,
-    type_: &Type,
-) -> Context {
+fn checks_against(state: &mut State, context: &Context, expr: &Expr, type_: &Type) -> Context {
     print_helper("check", format!("{}", expr), format!("{}", type_), context);
     assert!(is_well_formed(context, type_));
     match (expr, type_) {
         //1I
-        (Expression::Literal(lit), Type::Literal(lit_ty)) => {
+        (Expr::Literal(lit), Type::Literal(lit_ty)) => {
             print_rule("1I");
             assert!(literal_checks_against(lit, lit_ty));
             context.clone()
         }
         //->I
-        (Expression::Abstraction(x, e), Type::Function(a, b)) => {
+        (Expr::Abstraction(x, e), Type::Function(a, b)) => {
             print_rule("->I");
             let typed_var = ContextElement::TypedVariable(x.clone(), *a.clone());
             let gamma = context.add(typed_var.clone());
@@ -301,7 +296,7 @@ fn checks_against(
             checks_against(state, &gamma, expr, a).drop(var)
         }
         //xI
-        (Expression::Tuple(fst, snd), Type::Product(a, b)) => {
+        (Expr::Tuple(fst, snd), Type::Product(a, b)) => {
             print_rule("xI");
             let gamma = checks_against(state, context, fst, a);
             checks_against(state, &gamma, snd, b)
@@ -332,16 +327,16 @@ fn literal_synthesizes_to(literal: &Literal) -> LiteralType {
 }
 
 ///Figure 11
-fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (Type, Context) {
+fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, Context) {
     print_helper("synth", format!("{}", expr), "".into(), context);
     match expr {
         //1I=>
-        Expression::Literal(lit) => {
+        Expr::Literal(lit) => {
             print_rule("1I=>");
             (Type::Literal(literal_synthesizes_to(lit)), context.clone())
         }
         //Var
-        Expression::Variable(x) => {
+        Expr::Variable(x) => {
             print_rule("Var");
             if let Some(annotation) = context.get_annotation(x) {
                 return (annotation.clone(), context.clone());
@@ -349,7 +344,7 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (T
             panic!();
         }
         //Anno
-        Expression::Annotation(e, annotation) => {
+        Expr::Annotation(e, annotation) => {
             print_rule("Anno");
             if is_well_formed(context, annotation) {
                 let delta = checks_against(state, context, e, annotation);
@@ -358,7 +353,7 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (T
             panic!();
         }
         //->I=>
-        Expression::Abstraction(x, e) => {
+        Expr::Abstraction(x, e) => {
             print_rule("->I=>");
             let alpha = state.fresh_existential();
             let beta = state.fresh_existential();
@@ -380,13 +375,13 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (T
                 delta,
             );
         }
-        Expression::Tuple(fst, snd) => {
+        Expr::Tuple(fst, snd) => {
             print_rule("SynthProduct");
             let (a, gamma) = synthesizes_to(state, context, fst);
             let (b, delta) = synthesizes_to(state, &gamma, snd);
             return (Type::Product(a.into(), b.into()), delta);
         }
-        Expression::Let(var, expr, body) => {
+        Expr::Let(var, expr, body) => {
             print_rule("Let");
             let (t0, gamma) = synthesizes_to(state, context, expr);
             let theta = gamma.add(ContextElement::TypedVariable(var.clone(), t0.clone()));
@@ -399,7 +394,7 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (T
         }
 
         //->E
-        Expression::Application(e1, e2) => {
+        Expr::Application(e1, e2) => {
             print_rule("->E");
             let (a, theta) = synthesizes_to(state, context, e1);
             return application_synthesizes_to(state, &theta, &apply_context(a, &theta), e2);
@@ -412,7 +407,7 @@ fn application_synthesizes_to(
     state: &mut State,
     context: &Context,
     type_: &Type,
-    expr: &Expression,
+    expr: &Expr,
 ) -> (Type, Context) {
     print_helper(
         "app_synth",
@@ -805,7 +800,7 @@ fn substitution(a: &Type, alpha: &str, b: &Type) -> Type {
     }
 }
 
-fn synth(expression: Expression) -> Type {
+fn synth(expression: Expr) -> Type {
     let (t, c) = synthesizes_to(&mut State::initial(), &Context::initial(), &expression);
     println!("-------------------RESULTS-------------------");
     println!("{} in context {}", t, c);
@@ -830,12 +825,12 @@ fn print_rule(rule: &str) {
     println!("{:>20}", rule);
 }
 
-fn literal_string() -> Expression {
-    Expression::Literal(Literal::String("Test".into()))
+fn literal_string() -> Expr {
+    Expr::Literal(Literal::String("Test".into()))
 }
 
-fn literal_bool() -> Expression {
-    Expression::Literal(Literal::Bool(true))
+fn literal_bool() -> Expr {
+    Expr::Literal(Literal::Bool(true))
 }
 
 #[test]
@@ -846,8 +841,8 @@ fn basic() {
 #[test]
 fn application_string() {
     assert_eq!(
-        synth(Expression::Application(
-            Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),).into(),
+        synth(Expr::Application(
+            Expr::Abstraction("x".into(), Expr::Variable("x".into()).into(),).into(),
             literal_string().into(),
         )),
         Type::Literal(LiteralType::String)
@@ -857,8 +852,8 @@ fn application_string() {
 #[test]
 fn application_bool() {
     assert_eq!(
-        synth(Expression::Application(
-            Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),).into(),
+        synth(Expr::Application(
+            Expr::Abstraction("x".into(), Expr::Variable("x".into()).into(),).into(),
             literal_bool().into(),
         )),
         Type::Literal(LiteralType::Bool)
@@ -868,9 +863,9 @@ fn application_bool() {
 #[test]
 fn lambda() {
     assert_eq!(
-        synth(Expression::Abstraction(
+        synth(Expr::Abstraction(
             "x".into(),
-            Expression::Variable("x".into()).into()
+            Expr::Variable("x".into()).into()
         )),
         Type::Function(
             Type::Existential("t0".into()).into(),
@@ -882,10 +877,7 @@ fn lambda() {
 #[test]
 fn idunit() {
     assert_eq!(
-        synth(Expression::Application(
-            id_fn().into(),
-            literal_string().into()
-        )),
+        synth(Expr::Application(id_fn().into(), literal_string().into())),
         Type::Literal(LiteralType::String)
     )
 }
@@ -893,10 +885,7 @@ fn idunit() {
 #[test]
 fn tuples() {
     assert_eq!(
-        synth(Expression::Tuple(
-            literal_string().into(),
-            literal_bool().into()
-        )),
+        synth(Expr::Tuple(literal_string().into(), literal_bool().into())),
         Type::Product(
             Type::Literal(LiteralType::String).into(),
             Type::Literal(LiteralType::Bool).into()
@@ -908,11 +897,11 @@ fn tuples() {
 fn tuples_in_lambda() {
     assert_eq!(
         synth(construct_app(
-            Expression::Abstraction(
+            Expr::Abstraction(
                 "x".into(),
-                Expression::Tuple(
-                    Expression::Variable("x".into()).into(),
-                    Expression::Variable("x".into()).into()
+                Expr::Tuple(
+                    Expr::Variable("x".into()).into(),
+                    Expr::Variable("x".into()).into()
                 )
                 .into()
             ),
@@ -929,13 +918,13 @@ fn tuples_in_lambda() {
 fn nested_tuples() {
     assert_eq!(
         synth(construct_app(
-            Expression::Abstraction(
+            Expr::Abstraction(
                 "x".into(),
-                Expression::Tuple(
-                    Expression::Variable("x".into()).into(),
-                    Expression::Tuple(
-                        Expression::Variable("x".into()).into(),
-                        Expression::Variable("x".into()).into()
+                Expr::Tuple(
+                    Expr::Variable("x".into()).into(),
+                    Expr::Tuple(
+                        Expr::Variable("x".into()).into(),
+                        Expr::Variable("x".into()).into()
                     )
                     .into()
                 )
@@ -957,9 +946,9 @@ fn nested_tuples() {
 #[test]
 fn tuples_in_fn() {
     assert_eq!(
-        synth(Expression::Application(
+        synth(Expr::Application(
             id_fn().into(),
-            Expression::Tuple(literal_string().into(), literal_bool().into()).into()
+            Expr::Tuple(literal_string().into(), literal_bool().into()).into()
         )),
         Type::Product(
             Type::Literal(LiteralType::String).into(),
@@ -977,13 +966,9 @@ fn generalised_let() {
             //Without annotation, e.g.
             //Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),).into(),
             //It fails.
-            Expression::Tuple(
-                construct_app(
-                    Expression::Variable("newid".into()),
-                    literal_string().into()
-                )
-                .into(),
-                construct_app(Expression::Variable("newid".into()), literal_bool().into()).into()
+            Expr::Tuple(
+                construct_app(Expr::Variable("newid".into()), literal_string().into()).into(),
+                construct_app(Expr::Variable("newid".into()), literal_bool().into()).into()
             )
         )),
         Type::Product(
@@ -996,10 +981,10 @@ fn generalised_let() {
 #[test]
 fn let_binding() {
     assert_eq!(
-        synth(Expression::Let(
+        synth(Expr::Let(
             "a".into(),
             literal_bool().into(),
-            Expression::Application(id_fn().into(), Expression::Variable("a".into()).into()).into()
+            Expr::Application(id_fn().into(), Expr::Variable("a".into()).into()).into()
         )),
         Type::Literal(LiteralType::Bool)
     )
@@ -1011,9 +996,8 @@ fn let_fn() {
         synth(construct_app(
             construct_let(
                 "newid",
-                Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),)
-                    .into(),
-                Expression::Variable("newid".into())
+                Expr::Abstraction("x".into(), Expr::Variable("x".into()).into(),).into(),
+                Expr::Variable("newid".into())
             ),
             literal_string().into()
         )),
@@ -1021,17 +1005,17 @@ fn let_fn() {
     );
 }
 
-fn construct_app(e0: Expression, e1: Expression) -> Expression {
-    Expression::Application(e0.into(), e1.into())
+fn construct_app(e0: Expr, e1: Expr) -> Expr {
+    Expr::Application(e0.into(), e1.into())
 }
 
-fn construct_let(var: &str, e0: Expression, body: Expression) -> Expression {
-    Expression::Let(var.into(), e0.into(), body.into())
+fn construct_let(var: &str, e0: Expr, body: Expr) -> Expr {
+    Expr::Let(var.into(), e0.into(), body.into())
 }
 
-fn id_fn() -> Expression {
-    Expression::Annotation(
-        Expression::Abstraction("x".into(), Expression::Variable("x".into()).into()).into(),
+fn id_fn() -> Expr {
+    Expr::Annotation(
+        Expr::Abstraction("x".into(), Expr::Variable("x".into()).into()).into(),
         Type::Quantification(
             "t".into(),
             Type::Function(
