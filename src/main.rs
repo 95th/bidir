@@ -9,6 +9,37 @@
 
 use std::fmt;
 
+macro_rules! define_index_type {
+    ($name:ident) => {
+        #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+        pub struct $name(u32);
+
+        impl $name {
+            pub fn next(&mut self) -> Self {
+                let c = *self;
+                self.0 += 1;
+                c
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl From<u32> for $name {
+            fn from(v: u32) -> Self {
+                Self(v)
+            }
+        }
+    };
+}
+
+define_index_type!(Var);
+define_index_type!(UniVar);
+define_index_type!(ExVar);
+
 ///Figure 6
 #[derive(Clone, Debug)]
 enum Expr {
@@ -57,37 +88,6 @@ impl fmt::Display for Literal {
         }
     }
 }
-
-macro_rules! define_index_type {
-    ($name:ident) => {
-        #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-        pub struct $name(u32);
-
-        impl $name {
-            pub fn next(&mut self) -> Self {
-                let c = *self;
-                self.0 += 1;
-                c
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-
-        impl From<u32> for $name {
-            fn from(v: u32) -> Self {
-                Self(v)
-            }
-        }
-    };
-}
-
-define_index_type!(Var);
-define_index_type!(UniVar);
-define_index_type!(ExVar);
 
 ///Figure 6
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,7 +176,7 @@ struct Context {
 impl fmt::Display for Context {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "[").unwrap();
-        &self.elements.iter().fold(true, |first, ele| {
+        self.elements.iter().fold(true, |first, ele| {
             if !first {
                 write!(f, ", ").unwrap()
             };
