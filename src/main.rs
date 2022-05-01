@@ -28,6 +28,7 @@ macro_rules! define_index_type {
             }
         }
 
+        #[cfg(test)]
         impl From<u32> for $name {
             fn from(v: u32) -> Self {
                 Self(v)
@@ -1051,6 +1052,7 @@ fn construct_let(var: ExVar, e0: Expr, body: Expr) -> Expr {
     Expr::Let(var, e0.into(), body.into())
 }
 
+#[cfg(test)]
 fn id_fn() -> Expr {
     Expr::Annotation(
         Expr::Abstraction(1.into(), Expr::Variable(1.into()).into()).into(),
