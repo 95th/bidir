@@ -11,7 +11,7 @@ use std::fmt;
 
 macro_rules! define_index_type {
     ($name:ident) => {
-        #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
+        #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
         pub struct $name(u32);
 
         impl $name {
