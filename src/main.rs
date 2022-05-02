@@ -11,7 +11,7 @@ use std::fmt;
 
 macro_rules! define_index_type {
     ($name:ident) => {
-        #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+        #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
         pub struct $name(u32);
 
         impl $name {
@@ -44,11 +44,11 @@ define_index_type!(ExVar);
 ///Figure 6
 #[derive(Clone, Debug)]
 enum Expr {
-    Variable(ExVar),
+    Variable(Var),
     Literal(Literal),
-    Abstraction(ExVar, Box<Expr>),
+    Abstraction(Var, Box<Expr>),
     Application(Box<Expr>, Box<Expr>),
-    Let(ExVar, Box<Expr>, Box<Expr>),
+    Let(Var, Box<Expr>, Box<Expr>),
     Annotation(Box<Expr>, Type),
     Tuple(Box<Expr>, Box<Expr>),
 }
@@ -153,7 +153,7 @@ enum ContextElement {
     Existential(ExVar),
     Solved(ExVar, Type),
     Marker(ExVar),
-    TypedVariable(ExVar, Type),
+    TypedVariable(Var, Type),
 }
 
 impl fmt::Display for ContextElement {
@@ -258,7 +258,7 @@ impl Context {
             .any(|ele| ele == &ContextElement::Variable(alpha))
     }
 
-    fn get_annotation(&self, x: ExVar) -> Option<&Type> {
+    fn get_annotation(&self, x: Var) -> Option<&Type> {
         for ele in &self.elements {
             if let ContextElement::TypedVariable(var, type_) = ele {
                 if *var == x {
@@ -1048,7 +1048,7 @@ fn construct_app(e0: Expr, e1: Expr) -> Expr {
     Expr::Application(e0.into(), e1.into())
 }
 
-fn construct_let(var: ExVar, e0: Expr, body: Expr) -> Expr {
+fn construct_let(var: Var, e0: Expr, body: Expr) -> Expr {
     Expr::Let(var, e0.into(), body.into())
 }
 
