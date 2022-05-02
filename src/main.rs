@@ -38,8 +38,7 @@ macro_rules! define_index_type {
 }
 
 define_index_type!(Var);
-define_index_type!(UniVar);
-define_index_type!(ExVar);
+define_index_type!(TypeVar);
 
 ///Figure 6
 #[derive(Clone, Debug)]
@@ -94,9 +93,9 @@ impl fmt::Display for Literal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Type {
     Literal(LiteralType),
-    Variable(ExVar),
-    Existential(ExVar),
-    Quantification(ExVar, Box<Type>),
+    Variable(TypeVar),
+    Existential(TypeVar),
+    Quantification(TypeVar, Box<Type>),
     Function(Box<Type>, Box<Type>),
     Product(Box<Type>, Box<Type>),
 }
@@ -149,10 +148,10 @@ impl Type {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ContextElement {
-    Variable(ExVar),
-    Existential(ExVar),
-    Solved(ExVar, Type),
-    Marker(ExVar),
+    Variable(TypeVar),
+    Existential(TypeVar),
+    Solved(TypeVar, Type),
+    Marker(TypeVar),
     TypedVariable(Var, Type),
 }
 
@@ -235,7 +234,7 @@ impl Context {
         panic!();
     }
 
-    fn get_solved(&self, alpha: ExVar) -> Option<&Type> {
+    fn get_solved(&self, alpha: TypeVar) -> Option<&Type> {
         for ele in &self.elements {
             if let ContextElement::Solved(alpha1, tau) = ele {
                 if alpha == *alpha1 {
@@ -246,13 +245,13 @@ impl Context {
         None
     }
 
-    fn has_existential(&self, alpha: ExVar) -> bool {
+    fn has_existential(&self, alpha: TypeVar) -> bool {
         self.elements
             .iter()
             .any(|ele| ele == &ContextElement::Existential(alpha))
     }
 
-    fn has_variable(&self, alpha: ExVar) -> bool {
+    fn has_variable(&self, alpha: TypeVar) -> bool {
         self.elements
             .iter()
             .any(|ele| ele == &ContextElement::Variable(alpha))
@@ -275,17 +274,17 @@ impl Context {
 /// It is passed around mutably everywhere
 #[derive(Clone, Debug)]
 struct State {
-    existentials: ExVar,
+    existentials: TypeVar,
 }
 
 impl State {
     fn initial() -> State {
         State {
-            existentials: ExVar::default(),
+            existentials: TypeVar::default(),
         }
     }
 
-    fn fresh_existential(&mut self) -> ExVar {
+    fn fresh_existential(&mut self) -> TypeVar {
         self.existentials.next()
     }
 }
@@ -509,7 +508,7 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
 ///
 /// Alas, I could not find a definition of the FV function and had to copy the implementation of
 /// https://github.com/ollef/Bidirectional and https://github.com/atennapel/bidirectional.js
-fn occurs_in(alpha: ExVar, a: &Type) -> bool {
+fn occurs_in(alpha: TypeVar, a: &Type) -> bool {
     match a {
         Type::Literal(_) => false,
         Type::Variable(var) => alpha == *var,
@@ -615,7 +614,7 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
 }
 
 /// Figure 10
-fn instantiate_l(state: &mut State, context: &Context, alpha: ExVar, b: &Type) -> Context {
+fn instantiate_l(state: &mut State, context: &Context, alpha: TypeVar, b: &Type) -> Context {
     print_helper(
         "instantiate_l",
         alpha.to_string(),
@@ -683,7 +682,7 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: ExVar, b: &Type) -
 }
 
 /// Figure 10
-fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: ExVar) -> Context {
+fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: TypeVar) -> Context {
     print_helper(
         "instantiate_r",
         format!("{}", a),
@@ -807,7 +806,7 @@ fn apply_context(a: Type, context: &Context) -> Type {
 /// https://github.com/ollef/Bidirectional and https://github.com/atennapel/bidirectional.js
 ///
 /// Substitution is written in the paper as [α^/α]A which means, α is replaced with α^ in all occurrences in A
-fn substitution(a: &Type, alpha: ExVar, b: &Type) -> Type {
+fn substitution(a: &Type, alpha: TypeVar, b: &Type) -> Type {
     match a {
         Type::Literal(_) => a.clone(),
         Type::Variable(var) => {
